@@ -1,0 +1,987 @@
+{
+ "name": "Recherche d'emploi automatique (modèle à partager)",
+ "nodes": [
+  {
+   "id": "9a38ff94-3a7e-4f3d-a178-7d5de62cfc84",
+   "name": "Guide",
+   "type": "n8n-nodes-base.stickyNote",
+   "typeVersion": 1,
+   "position": [
+    -600,
+    -420
+   ],
+   "parameters": {
+    "content": "## 🎯 Recherche d'emploi automatique\n\n**Chaque jour à 14h** : lit ton CV → cherche les offres de ton métier dans ton pays (JSearch = Google for Jobs) → Gemini note chaque offre /100 → les meilleures reçoivent un CV adapté (copie de ton modèle) → ligne dans ton Sheet → email.\n\n**Le workflow ne postule jamais à ta place.** Tu relis le CV et tu postules toi-même.\n\n### À faire une seule fois\n1. Remplis le nœud **⚙️ Paramètres** (email, lien du modèle de CV, lien du Sheet).\n2. Crée tes identifiants et choisis-les dans les nœuds marqués ⚠️ : Google (Docs, Drive, Sheets, Gmail), Gemini, JSearch.\n3. Clique sur **Execute workflow** pour tester, puis **Publish**.\n\nLe guide complet est dans le fichier GUIDE envoyé avec ce workflow.",
+    "height": 400,
+    "width": 520,
+    "color": 4
+   }
+  },
+  {
+   "id": "7cc050e5-080f-4885-bff9-1678d629f6f0",
+   "name": "When clicking ‘Execute workflow’",
+   "type": "n8n-nodes-base.manualTrigger",
+   "typeVersion": 1,
+   "position": [
+    -400,
+    0
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "e6315e23-f29e-453a-9f07-77a5a061d534",
+   "name": "Programmation (tous les jours 14h)",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.2,
+   "position": [
+    -600,
+    200
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "triggerAtHour": 14
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "19b86530-a535-40de-8ff0-371fbd86f7cc",
+   "name": "Démarrage de n8n",
+   "type": "n8n-nodes-base.n8nTrigger",
+   "typeVersion": 1,
+   "position": [
+    -820,
+    400
+   ],
+   "parameters": {
+    "events": [
+     "init"
+    ]
+   }
+  },
+  {
+   "id": "40465a0b-ab74-4fc8-bcba-363ab2e54de7",
+   "name": "Attendre le réseau",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    -600,
+    400
+   ],
+   "webhookId": "e250284f-b4b8-47b0-a864-8d502fa629b6",
+   "parameters": {
+    "amount": 60,
+    "unit": "seconds"
+   }
+  },
+  {
+   "id": "75905e16-79d2-446b-98c1-1cdbffbcacf3",
+   "name": "Déjà lancé aujourd'hui ?",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -380,
+    300
+   ],
+   "parameters": {
+    "jsCode": "// Décide si on lance la recherche aujourd'hui.\n// - Planning : on lance, sauf si déjà fait aujourd'hui.\n// - Démarrage du PC (rattrapage) : on lance seulement si l'heure prévue est passée\n//   ET que rien n'a encore tourné aujourd'hui (PC éteint à l'heure prévue).\n// La date du dernier lancement est gardée dans les \"static data\" du workflow.\nconst HEURE_PREVUE = 14; // ⚠️ même heure que le nœud « Programmation »\nconst memoire = $getWorkflowStaticData('global');\nconst aujourdhui = $now.toFormat('yyyy-MM-dd'); // fuseau : Settings du workflow\nconst rattrapage = $('Démarrage de n8n').isExecuted;\n\nif (memoire.dernierLancement === aujourdhui) return [];       // déjà fait aujourd'hui\nif (rattrapage && $now.hour < HEURE_PREVUE) return [];        // le planning s'en chargera\n\nmemoire.dernierLancement = aujourdhui;\nreturn [{ json: { declencheur: rattrapage ? 'rattrapage au démarrage' : 'planning', date: aujourdhui } }];\n"
+   }
+  },
+  {
+   "id": "31351c33-f07c-4d77-9666-894fb598408c",
+   "name": "Paramètres",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    -160,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// ⚙️ PARAMÈTRES — le SEUL nœud à modifier.\n// Le métier, le niveau, le pays et les mots-clés de recherche sont lus automatiquement\n// dans ton CV par Gemini (nœuds « Gemini lit le CV » et « Profil du CV »). Tu peux les forcer ici si tu veux.\nreturn [{ json: {\n  email: 'TON_EMAIL@gmail.com',           // où recevoir l'email du jour\n  modeleCV: 'COLLE_ICI_LE_LIEN_DE_TON_MODELE_DE_CV_GOOGLE_DOCS',  // Google Doc avec les marqueurs {{CLÉ: texte}}\n  sheet: 'COLLE_ICI_LE_LIEN_DE_TON_GOOGLE_SHEET',     // Google Sheet vide avec un onglet nommé « Offres »\n\n  scoreMinimum: 60,       // note minimale (0-100) pour qu'une offre soit envoyée\n  offresParJour: 3,       // nombre d'offres envoyées par jour (avec CV adapté)\n  offresAnalysees: 12,    // offres notées par Gemini par jour (max ~12 : Gemini gratuit = 15 requêtes/min)\n  maxJours: 21,           // ignorer les offres publiées il y a plus de N jours\n\n  // Optionnel : laisser vide = déduit du CV\n  motsCles: [],           // ex. ['devops', 'cloud engineer']\n  pays: '',               // code pays à 2 lettres pour JSearch, ex. 'ma', 'fr', 'de', 'ca'\n} }];\n"
+   }
+  },
+  {
+   "id": "326d24c2-9da2-4cf0-a774-25a2c8514fd7",
+   "name": "Lire le modèle de CV",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    60,
+    0
+   ],
+   "parameters": {
+    "url": "=https://docs.googleapis.com/v1/documents/{{ $('Paramètres').first().json.modeleCV.match(/[-\\w]{25,}/)[0] }}",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleDocsOAuth2Api",
+    "options": {}
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "c0e08f01-b775-4447-bc17-c8a270b92e57",
+   "name": "Préparer le CV",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    280,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Lit le modèle de CV (réponse brute de l'API Google Docs) :\n// 1) tout le texte, y compris dans les tableaux -> cvTexte (sert à Gemini pour noter les offres)\n// 2) les marqueurs {{CLÉ: texte original}} -> champs (ce que Gemini a le droit d'adapter)\nconst doc = $input.first().json;\nlet texte = '';\nconst lire = contenu => {\n  for (const bloc of contenu || []) {\n    if (bloc.paragraph) for (const el of bloc.paragraph.elements || []) texte += el.textRun?.content || '';\n    if (bloc.table) for (const ligne of bloc.table.tableRows || []) for (const cellule of ligne.tableCells || []) lire(cellule.content);\n    if (bloc.tableOfContents) lire(bloc.tableOfContents.content);\n  }\n};\nlire(doc.body?.content);\n\nconst marqueur = /\\{\\{([A-Z0-9_]+):\\s?([^{}\\n\\u000b]+?)\\}\\}/g;\nconst champs = {}, marqueurs = {};\nfor (const m of texte.matchAll(marqueur)) {\n  champs[m[1]] = m[2].trim();\n  marqueurs[m[1]] = m[0];            // texte exact à remplacer dans la copie du modèle\n}\nif (Object.keys(champs).length === 0) {\n  throw new Error(\"Aucun marqueur {{CLÉ: texte}} trouvé dans le modèle de CV. Vérifie le lien dans « Paramètres » et le format des marqueurs (voir le guide).\");\n}\nconst cvTexte = texte.replace(marqueur, (_, cle, valeur) => valeur.trim());\nreturn [{ json: { cvTexte, champs, marqueurs, nbChamps: Object.keys(champs).length } }];\n"
+   }
+  },
+  {
+   "id": "d6051f1f-0bd4-49ef-a456-1ed32686526b",
+   "name": "Gemini lit le CV",
+   "type": "@n8n/n8n-nodes-langchain.chainLlm",
+   "typeVersion": 1.9,
+   "position": [
+    500,
+    0
+   ],
+   "parameters": {
+    "promptType": "define",
+    "text": "=Read this resume and describe the job search it should drive.\n\nResume:\n{{ $('Préparer le CV').first().json.cvTexte }}\n\nRespond only with this JSON (no markdown):\n{\n \"prenom\": \"first name of the candidate\",\n \"metier\": \"the job the candidate targets, as a short title in the resume language (e.g. Ingénieur DevOps)\",\n \"niveau\": \"junior | confirmé | senior (from the years of experience in the resume; internships count, studies do not)\",\n \"annees_experience\": number,\n \"pays_code\": \"2-letter ISO code of the country where the candidate lives (from address/phone/city), lowercase\",\n \"pays_nom\": \"country name in the resume language\",\n \"langue\": \"fr or en: language of the resume\",\n \"mots_cles\": [\"exactly 4 JOB TITLES a recruiter would post for this candidate (not tools, not technologies), short, in the language(s) used by job boards in that country, without the country, e.g. 'devops', 'ingénieur devops', 'cloud engineer', 'ingénieur cloud'\"],\n \"mots_titre\": [\"6 to 12 lowercase words found in relevant job titles (e.g. 'devops', 'cloud', 'sre', 'infrastructure'); give accented AND unaccented spellings (systèmes, systemes)\"],\n \"mots_exclus\": [\"lowercase words that mark job titles to skip: seniority above the candidate's level (for a junior: senior, sr, lead, manager, principal, architect, expert, confirmé, expérimenté, head), internships (stage, stagiaire, intern, internship, alternance, apprenti), freelance, and clearly different professions. Do NOT exclude words that also appear in the candidate's own field (e.g. never exclude 'security' for someone doing DevSecOps)\"],\n \"profil\": \"2 sentences in English describing the candidate for a recruiter-side scorer: level, years, main skills, languages, what contract they want if stated (else 'a permanent full-time job')\"\n}",
+    "batching": {},
+    "messageValues": []
+   },
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 5000
+  },
+  {
+   "id": "17beb171-347f-45c4-b951-f21555e216f9",
+   "name": "Gemini (analyse)",
+   "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+   "typeVersion": 1.1,
+   "position": [
+    500,
+    220
+   ],
+   "parameters": {
+    "modelName": "models/gemini-3.5-flash-lite",
+    "options": {
+     "temperature": 0
+    }
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "43d09a65-e54a-496b-9590-84caedf27cb9",
+   "name": "Profil du CV",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    720,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Lit l'analyse du CV par Gemini, et applique les choix forcés dans « Paramètres ».\nconst p = $('Paramètres').first().json;\nconst t = ($input.first().json.text || '').replace(/```[a-z]*/g, '');\nlet a = {};\ntry { a = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1)); } catch (e) {\n  throw new Error(\"Gemini n'a pas renvoyé une analyse lisible du CV : \" + t.slice(0, 300));\n}\nconst liste = x => (Array.isArray(x) ? x : []).map(s => String(s).toLowerCase().trim()).filter(Boolean);\nconst motsCles = (p.motsCles && p.motsCles.length) ? p.motsCles : (a.mots_cles || []);\nreturn [{ json: {\n  prenom: a.prenom || '',\n  metier: a.metier || '',\n  niveau: a.niveau || '',\n  annees_experience: a.annees_experience ?? '',\n  pays_code: (p.pays || a.pays_code || '').toLowerCase(),\n  pays_nom: a.pays_nom || '',\n  langue: a.langue === 'en' ? 'en' : 'fr',\n  mots_cles: motsCles.slice(0, 4),\n  mots_titre: liste(a.mots_titre).concat(liste(motsCles)),\n  mots_exclus: liste(a.mots_exclus),\n  profil: a.profil || '',\n} }];\n"
+   }
+  },
+  {
+   "id": "461d97ad-d007-4b4a-a6c2-227365cccd45",
+   "name": "Lire le Sheet",
+   "type": "n8n-nodes-base.googleSheets",
+   "typeVersion": 4.7,
+   "position": [
+    940,
+    0
+   ],
+   "alwaysOutputData": true,
+   "parameters": {
+    "documentId": {
+     "__rl": true,
+     "value": "={{ $('Paramètres').first().json.sheet.match(/[-\\w]{25,}/)[0] }}",
+     "mode": "id"
+    },
+    "sheetName": {
+     "__rl": true,
+     "value": "Offres",
+     "mode": "name"
+    },
+    "options": {}
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "a8edb6f5-65ea-4002-8b70-4bced62b5db0",
+   "name": "Recherches",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1160,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// Une recherche JSearch par mot-clé (Google for Jobs : LinkedIn, Indeed, sites locaux...).\n// 4 recherches par jour x 30 jours = 120 requêtes/mois : ça tient dans le plan gratuit JSearch (200).\nconst a = $('Profil du CV').first().json;\nreturn a.mots_cles.map(k => ({ json: { query: `${k} ${a.pays_nom}`.trim() } }));\n"
+   }
+  },
+  {
+   "id": "73b858ff-30a8-4cd2-b7f0-384e50b6017b",
+   "name": "JSearch",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    1380,
+    0
+   ],
+   "parameters": {
+    "url": "https://jsearch.p.rapidapi.com/search-v2",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendQuery": true,
+    "queryParameters": {
+     "parameters": [
+      {
+       "name": "query",
+       "value": "={{ $json.query }}"
+      },
+      {
+       "name": "country",
+       "value": "={{ $('Profil du CV').first().json.pays_code }}"
+      },
+      {
+       "name": "language",
+       "value": "={{ $('Profil du CV').first().json.langue }}"
+      },
+      {
+       "name": "date_posted",
+       "value": "week"
+      },
+      {
+       "name": "num_pages",
+       "value": "1"
+      }
+     ]
+    },
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "X-RapidAPI-Host",
+       "value": "jsearch.p.rapidapi.com"
+      }
+     ]
+    },
+    "options": {
+     "batching": {
+      "batch": {
+       "batchSize": 1,
+       "batchInterval": 2000
+      }
+     }
+    }
+   },
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 5000,
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "cb0cf867-09a2-48b9-916e-ecdc36d3a4c3",
+   "name": "Nettoyer les offres",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1600,
+    0
+   ],
+   "parameters": {
+    "jsCode": "// JSearch renvoie une réponse par recherche, avec une liste d'offres dedans.\n// 1) on met toutes les offres à plat\n// 2) filtre gratuit avant Gemini (Gemini gratuit = 15 requêtes/minute) : métier, niveau, date, doublons\nconst p = $('Paramètres').first().json;\nconst a = $('Profil du CV').first().json;\n\n// \"il y a 3 jours\" / \"3 days ago\" -> date (JSearch ne donne pas toujours la vraie date)\nconst dateDepuis = texte => {\n  const m = String(texte || '').match(/(\\d+)\\s*(minute|heure|hour|jour|day|semaine|week|mois|month)/i);\n  if (!m) return '';\n  const unite = { minute: 1 / 1440, heure: 1 / 24, hour: 1 / 24, jour: 1, day: 1, semaine: 7, week: 7, mois: 30, month: 30 };\n  return new Date(Date.now() - unite[m[2].toLowerCase()] * Number(m[1]) * 86400000).toISOString().slice(0, 10);\n};\nconst offres = [];\nfor (const reponse of $input.all()) {\n  for (const j of (reponse.json.data?.jobs || [])) {\n    offres.push({\n      job_id: j.job_id,\n      job_title: (j.job_title || '').trim(),\n      company: (j.employer_name || '').trim(),\n      location: String(j.job_location || '').split('•')[0].replace(/\\s+/g, ' ').trim(),\n      job_url: j.job_apply_link || j.job_google_link || '',\n      apply_url: j.job_apply_link || '',\n      description: j.job_description || '',\n      posted_at: j.job_posted_at_datetime_utc ? String(j.job_posted_at_datetime_utc).slice(0, 10) : dateDepuis(j.job_posted_at),\n      work_type: (j.job_employment_types || []).join(', '),\n      salary: j.job_salary_string || '',\n      source: j.job_publisher || '',\n    });\n  }\n}\n\n// Mots lus dans le CV par Gemini -> filtres sur le titre\nconst echapper = s => s.replace(/[.*+?^${}()|[\\]\\\\\\/]/g, '\\\\$&');\nconst motif = mots => mots.length ? new RegExp('(' + mots.map(echapper).join('|') + ')', 'i') : null;\nconst metier = motif(a.mots_titre);\nconst exclus = motif(a.mots_exclus);\nconst debutant = /junior|débutant|jeune diplômé|entry level|graduate/i;\n\n// Même clé que pour les doublons : premier mot de l'entreprise + titre\nconst cle = (entreprise, titre) =>\n  (entreprise || '').toLowerCase().split(' ')[0] + '|' +\n  (titre || '').replace(/[​-‍﻿]/g, '').toLowerCase().replace(/\\s+/g, ' ').trim();\n\n// Offres déjà dans le Sheet (déjà envoyées un autre jour) : on ne les renvoie pas\nconst vus = new Set();\nfor (const ligne of $('Lire le Sheet').all()) {\n  const l = ligne.json;\n  if (l['Titre']) vus.add(cle(l['Entreprise'], l['Titre']));\n  if (l['Lien offre']) vus.add(String(l['Lien offre']).trim());\n}\n\nconst gardees = [];\nfor (const o of offres) {\n  if (metier && !metier.test(o.job_title)) continue;\n  // \"Junior à Senior\" : pour un candidat junior, le mot junior l'emporte\n  if (exclus && exclus.test(o.job_title) && !(a.niveau === 'junior' && debutant.test(o.job_title))) continue;\n  if (o.description.length < 300) continue; // annonces vides (agrégateurs)\n  const jours = (Date.now() - new Date(o.posted_at)) / 86400000;\n  if (o.posted_at && !(jours <= p.maxJours)) continue;\n  const k = cle(o.company, o.job_title);\n  if (vus.has(k) || vus.has(String(o.job_url).trim())) continue;\n  vus.add(k);\n  gardees.push(o);\n}\n\n// Les plus récentes d'abord\nreturn gardees\n  .sort((x, y) => String(y.posted_at).localeCompare(String(x.posted_at)))\n  .slice(0, p.offresAnalysees)\n  .map(o => ({ json: o }));\n"
+   }
+  },
+  {
+   "id": "0c3507a0-5d75-404c-ba5a-152c021d7f5e",
+   "name": "Loop Over Items",
+   "type": "n8n-nodes-base.splitInBatches",
+   "typeVersion": 3,
+   "position": [
+    1820,
+    0
+   ],
+   "parameters": {
+    "options": {}
+   }
+  },
+  {
+   "id": "81471993-8313-4e78-a777-70ab29df3530",
+   "name": "Pause Gemini",
+   "type": "n8n-nodes-base.wait",
+   "typeVersion": 1.1,
+   "position": [
+    2040,
+    160
+   ],
+   "webhookId": "debc3dfd-f7a4-4b49-acad-17056d664e80",
+   "parameters": {
+    "amount": 10
+   }
+  },
+  {
+   "id": "28492d5b-3b7c-43d9-8b50-ff2a2b905b86",
+   "name": "Noter l'offre",
+   "type": "@n8n/n8n-nodes-langchain.chainLlm",
+   "typeVersion": 1.9,
+   "position": [
+    2260,
+    160
+   ],
+   "parameters": {
+    "promptType": "define",
+    "text": "=##Overview\n{{ $('Profil du CV').first().json.profil }}\nGive this offer a score from 0 to 100: how good a target is it for this candidate, given the resume?\n\n##Scoring rules\n- 80-100: same profession as the candidate ({{ $('Profil du CV').first().json.metier }}), the required experience fits the candidate's level ({{ $('Profil du CV').first().json.niveau }}, about {{ $('Profil du CV').first().json.annees_experience }} years) or no years are stated, and the resume covers the core requirements.\n- 60-79: good role but 1-2 important tools or skills missing, or the offer is vague. Missing tools are normal: list them as gaps.\n- 40-59: asks for somewhat more experience than the candidate has, or the role is only partly the candidate's profession.\n- 0-39: clearly asks for much more experience, is an internship or freelance mission when the candidate wants a job, or is another profession.\nJudge ONLY on what the offer explicitly says. Do not guess seniority from the company or the difficulty of the tasks. \"Junior to Senior\" means juniors are accepted.\n\n##Resume\n{{ $('Préparer le CV').first().json.cvTexte }}\n\n##Offer\nTitle: {{ $json.job_title }}\nCompany: {{ $json.company }}\nLocation: {{ $json.location }}\nDescription:\n{{ $json.description }}\n\n##Answer\nRespond only with this JSON:\n{\"score\": 0-100, \"reason\": \"one or two sentences in {{ $('Profil du CV').first().json.langue === 'en' ? 'English' : 'French' }}: what matches and the main gaps\"}",
+    "batching": {},
+    "messageValues": []
+   },
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 5000
+  },
+  {
+   "id": "654c4abb-d015-47c8-9b1d-8a90651e1ebe",
+   "name": "Gemini (note)",
+   "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+   "typeVersion": 1.1,
+   "position": [
+    2260,
+    380
+   ],
+   "parameters": {
+    "modelName": "models/gemini-3.5-flash-lite",
+    "options": {}
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "eeb560b7-a6ac-458a-a7ca-fcee5d67cc83",
+   "name": "Lire le score",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2480,
+    160
+   ],
+   "parameters": {
+    "jsCode": "// Lit la réponse de Gemini (score + raison) et la colle à l'offre,\n// pour que la sortie \"done\" de la boucle contienne toutes les infos.\nconst offre = $('Nettoyer les offres').item.json;\nconst t = ($input.item.json.text || '').replace(/```[a-z]*/g, '');\nlet r = {};\ntry {\n  r = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));\n} catch (e) {\n  // Gemini met parfois des guillemets dans la raison, ce qui casse le JSON : on lit champ par champ\n  const score = t.match(/\"score\"\\s*:\\s*\"?(\\d+)/);\n  const raison = t.match(/\"reason\"\\s*:\\s*\"([\\s\\S]*)\"\\s*\\}/);\n  r = { score: score ? score[1] : 0, reason: raison ? raison[1] : '' };\n}\nreturn { json: { ...offre, score: Number(r.score) || 0, reason: r.reason || '' } };\n",
+    "mode": "runOnceForEachItem"
+   }
+  },
+  {
+   "id": "d96e92bb-1941-4dc4-a803-256a04da2655",
+   "name": "Top du jour",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2040,
+    -200
+   ],
+   "parameters": {
+    "jsCode": "// Garde les meilleures offres du jour (nombre et score minimum dans « Paramètres »).\n// Mieux vaut moins d'offres que des offres qui ne correspondent pas.\nconst p = $('Paramètres').first().json;\nreturn $input.all()\n  .map(i => i.json)\n  .filter(o => o.job_title && o.score >= p.scoreMinimum)\n  .sort((a, b) => b.score - a.score)\n  .slice(0, p.offresParJour)\n  .map(o => ({ json: o }));\n"
+   }
+  },
+  {
+   "id": "98614c09-6a1a-48d5-8ccf-3a4b50e8d5fb",
+   "name": "Adapter le CV",
+   "type": "@n8n/n8n-nodes-langchain.chainLlm",
+   "typeVersion": 1.9,
+   "position": [
+    2260,
+    -200
+   ],
+   "parameters": {
+    "promptType": "define",
+    "text": "=Here is the job offer:\nTitle: {{ $('Top du jour').item.json.job_title }}\nCompany: {{ $('Top du jour').item.json.company }}\nDescription:\n{{ $('Top du jour').item.json.description }}\n\nORIGINAL resume fields:\n{{ JSON.stringify($('Préparer le CV').first().json.champs, null, 1) }}\n\nReturn only the adapted JSON.",
+    "batching": {},
+    "messageValues": [
+     {
+      "message": "You are an expert resume writer for ATS (Applicant Tracking Systems). You adapt a candidate's resume to one specific job offer.\n\nYou receive the ORIGINAL resume fields as JSON. You return the SAME JSON keys with adapted values. The layout (photo, titles, fonts) is handled by a template: you only write text.\n\nStrict rules about content:\n- Use ONLY information that is in the original fields. Never add employers, job titles, dates, tools, skills, certifications, metrics or language levels that are not in them.\n- If the offer asks for something the original does not contain, leave it out.\n- Keep numbers, percentages, names and tools exactly as in the original.\n- Never describe a responsibility at a higher level than the original states (e.g. \"deployed on Kubernetes\" must not become \"administered Kubernetes clusters\"). Do not add soft skills (communication, teamwork, rigor...) or activities that are not written in the original.\n- Do not add qualifiers about the amount or quality of experience (solid, strong, extensive, proven, expert, confirmed, \"solide\", \"confirmée\", \"approfondie\"...). Keep the experience wording of the original (e.g. \"deux expériences\" stays \"deux expériences\").\n- A tool may only be linked to an activity or employer it is linked to in the original. A tool that appears only in a project or in the skills list must not be presented as used at work. Never write a verb the original does not use for that tool (administer, manage, design, evolve, lead...).\n- Write in the same language as the original fields.\n\nWhat to adapt, by key name:\n- Keys starting with TITRE: same style as the original; you may reorder or swap the keywords it lists for other skills found in the original fields that best match the offer.\n- Keys starting with PROFIL: at most as many sentences as the original. Start from the original PROFIL sentences and mostly reorder them; change at most a few words. Every fact must come from the original PROFIL. Put first what the offer asks for, using the offer's vocabulary when it means the same thing.\n- Keys starting with COMP: exactly the same items as the original (same spelling, separated by \", \"), none added, none removed; move the items the offer mentions to the front.\n- Keys of the form NAME_1, NAME_2, ... (same NAME, numbered) are bullets of one block (one job or one project list). Inside one block you may change which bullet goes in which slot so the most relevant comes first, and lightly rephrase, but every bullet keeps every fact of its original and adds nothing. Each original bullet appears exactly once. Keys starting with PROJET or PROJECT: reorder only, text unchanged.\n- Any other key: return the original text unchanged.\n\nOutput format:\n- Only the JSON object, with exactly the same keys as the input.\n- Values are plain text on one line: no line breaks, no markdown, no bullet character at the start."
+     }
+    ]
+   },
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 5000
+  },
+  {
+   "id": "01717f1b-1f8a-4394-b3d9-5b5353d7854a",
+   "name": "Gemini (CV)",
+   "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+   "typeVersion": 1.1,
+   "position": [
+    2260,
+    -420
+   ],
+   "parameters": {
+    "modelName": "models/gemini-3.5-flash-lite",
+    "options": {
+     "temperature": 0.2
+    }
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "5b3d6c57-b6a5-4824-b211-d179e65b1fcb",
+   "name": "Lire le CV adapté",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2480,
+    -200
+   ],
+   "parameters": {
+    "jsCode": "// Lit le JSON renvoyé par Gemini. Si un champ manque ou est vide,\n// on garde le texte original : le CV ne doit jamais avoir de marqueur {{...}} visible.\n// Prépare aussi les remplacements pour la copie du modèle.\nconst cv = $('Préparer le CV').first().json;\nconst original = cv.champs;\n\nconst texte = ($input.item.json.text || '').replace(/```[a-z]*/g, '').replace(/\\r?\\n/g, ' ').trim();\nlet adapte = {};\ntry {\n  adapte = JSON.parse(texte.slice(texte.indexOf('{'), texte.lastIndexOf('}') + 1));\n} catch (e) {\n  adapte = {};\n}\n\nconst resultat = {};\nfor (const cle of Object.keys(original)) {\n  const v = typeof adapte[cle] === 'string' ? adapte[cle].replace(/\\s*\\n\\s*/g, ' ').replace(/^[•\\-–]\\s*/, '').trim() : '';\n  resultat[cle] = v || original[cle];\n}\n// Garde-fou anti-invention : chaque mot du texte adapté doit exister quelque part dans le CV d'origine\n// (sauf les petits mots de liaison). Sinon on garde le texte original de ce champ.\nconst normaliser = s => s.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[’']/g, ' ');\nconst racine = m => m.length > 3 ? m.replace(/(s|x)$/, '') : m;   // pluriel ≈ singulier\nconst mots = s => (normaliser(s).match(/[a-z0-9+#.]+/g) || []).map(m => racine(m.replace(/\\.+$/, ''))).filter(Boolean);\nconst liaison = new Set(('a au aux avec ce ces cette d dans de des du en et j je l la le les leur ma mes mon ne ou par pour qu que qui sa se ses son sur un une y '\n  + 'an and as at by for from i in into is my of on or the to with').split(' '));\nconst vocabulaire = new Set(mots(cv.cvTexte));\nconst refuses = [];\nfor (const cle of Object.keys(original)) {\n  const inconnus = [...new Set(mots(resultat[cle]).filter(m => !liaison.has(m) && !vocabulaire.has(m)))];\n  if (inconnus.length) { refuses.push(`${cle} (${inconnus.join(', ')})`); resultat[cle] = original[cle]; }\n}\n// Compétences : Gemini peut changer l'ordre, mais pas la liste. Sinon on garde l'original.\nconst items = s => s.split(',').map(x => x.trim()).filter(Boolean).sort().join('|');\nfor (const cle of Object.keys(original).filter(k => k.startsWith('COMP'))) {\n  if (items(resultat[cle]) !== items(original[cle])) resultat[cle] = original[cle];\n}\nconst requetes = Object.keys(original).map(cle => ({\n  replaceAllText: { containsText: { text: cv.marqueurs[cle], matchCase: true }, replaceText: resultat[cle] },\n}));\nreturn { json: { ...resultat, json_ok: Object.keys(adapte).length > 0, champs_refuses: refuses, requetes } };\n",
+    "mode": "runOnceForEachItem"
+   }
+  },
+  {
+   "id": "65d18ecf-a952-409a-869e-1239117a5097",
+   "name": "Copier le modèle",
+   "type": "n8n-nodes-base.googleDrive",
+   "typeVersion": 3,
+   "position": [
+    2700,
+    -200
+   ],
+   "parameters": {
+    "operation": "copy",
+    "fileId": {
+     "__rl": true,
+     "value": "={{ $('Paramètres').first().json.modeleCV.match(/[-\\w]{25,}/)[0] }}",
+     "mode": "id"
+    },
+    "name": "=CV_{{ $('Profil du CV').first().json.prenom }}_{{ $('Top du jour').item.json.company }}_{{ $('Top du jour').item.json.job_title }}",
+    "options": {}
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "ad6226d5-015b-49e5-ae0e-f6925133d8f3",
+   "name": "Remplir le CV",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.2,
+   "position": [
+    2920,
+    -200
+   ],
+   "parameters": {
+    "method": "POST",
+    "url": "=https://docs.googleapis.com/v1/documents/{{ $json.id }}:batchUpdate",
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "googleDocsOAuth2Api",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({ requests: $('Lire le CV adapté').item.json.requetes }) }}",
+    "options": {}
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "0f2fccc8-57a1-459a-95ea-846d72009989",
+   "name": "Préparer la ligne",
+   "type": "n8n-nodes-base.set",
+   "typeVersion": 3.4,
+   "position": [
+    3140,
+    -200
+   ],
+   "parameters": {
+    "assignments": {
+     "assignments": [
+      {
+       "id": "73590dbc-02fa-4990-ae51-917541ed48ec",
+       "name": "Date",
+       "type": "string",
+       "value": "={{ $now.toFormat('yyyy-MM-dd') }}"
+      },
+      {
+       "id": "c0c3181f-b8e6-4491-a059-d3839e5563fb",
+       "name": "Titre",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.job_title }}"
+      },
+      {
+       "id": "0a8ec118-b7b5-41d5-9bbd-805988cc766d",
+       "name": "Entreprise",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.company }}"
+      },
+      {
+       "id": "0bce1d16-138e-48a0-adba-42b966e5d8bf",
+       "name": "Lieu",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.location }}"
+      },
+      {
+       "id": "2e147f6f-6cc6-4de6-8fbb-20e7f39fa5bf",
+       "name": "Score",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.score }}"
+      },
+      {
+       "id": "1363a20b-4e21-4f50-8496-7cf8fbd917e5",
+       "name": "Raison",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.reason }}"
+      },
+      {
+       "id": "41e0c32d-e0c5-424f-a055-2739fe6dcd50",
+       "name": "CV",
+       "type": "string",
+       "value": "=https://docs.google.com/document/d/{{ $('Copier le modèle').item.json.id }}/edit"
+      },
+      {
+       "id": "db430e08-aa48-4f28-bab1-5c9a9d693d10",
+       "name": "Lien offre",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.job_url }}"
+      },
+      {
+       "id": "e77f60e1-941f-4ded-ad9f-4360ca760e9f",
+       "name": "Lien candidature",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.apply_url }}"
+      },
+      {
+       "id": "582ce348-1350-46b9-95b9-83fad2f5fcdb",
+       "name": "Source",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.source }}"
+      },
+      {
+       "id": "2c20c450-65de-42d8-839d-8cb47103bd84",
+       "name": "Publiée le",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.posted_at }}"
+      },
+      {
+       "id": "194d575f-0e19-4396-add9-cba2e255195c",
+       "name": "Salaire",
+       "type": "string",
+       "value": "={{ $('Top du jour').item.json.salary }}"
+      },
+      {
+       "id": "c1eb9935-281e-4b4c-a986-d5d0e4d4afb3",
+       "name": "Statut",
+       "type": "string",
+       "value": "À postuler"
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "090b4a57-2ced-40f2-b810-c56082e604da",
+   "name": "Ajouter au Sheet",
+   "type": "n8n-nodes-base.googleSheets",
+   "typeVersion": 4.7,
+   "position": [
+    3360,
+    -200
+   ],
+   "parameters": {
+    "operation": "append",
+    "documentId": {
+     "__rl": true,
+     "value": "={{ $('Paramètres').first().json.sheet.match(/[-\\w]{25,}/)[0] }}",
+     "mode": "id"
+    },
+    "sheetName": {
+     "__rl": true,
+     "value": "Offres",
+     "mode": "name"
+    },
+    "columns": {
+     "mappingMode": "autoMapInputData",
+     "value": {},
+     "matchingColumns": [],
+     "schema": []
+    },
+    "options": {
+     "handlingExtraData": "insertInNewColumn"
+    }
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  },
+  {
+   "id": "2aa496a8-314c-4abd-8a8b-80b6f55f8dfe",
+   "name": "Résumé du jour",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    3580,
+    -200
+   ],
+   "parameters": {
+    "jsCode": "// Résumé du jour : une carte par offre envoyée, avec le lien du CV.\n// Si aucune offre n'a passé le score minimum, \"Top du jour\" est vide et rien n'arrive ici : pas d'email.\nconst offres = $('Top du jour').all().map(i => i.json);\nconst cvs = $('Copier le modèle').all().map(i => i.json.id);\nconst a = $('Profil du CV').first().json;\nif (offres.length === 0) return [];\n\nconst esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst cartes = offres.map((o, n) => {\n  const cv = `https://docs.google.com/document/d/${cvs[n]}/edit`;\n  const pdf = `https://docs.google.com/document/d/${cvs[n]}/export?format=pdf`;\n  return `<div style=\"border:1px solid #ddd;border-radius:8px;padding:12px;margin:12px 0\">\n  <span style=\"background:#eef;border-radius:4px;padding:1px 6px\">${esc(o.score)}/100 · via ${esc(o.source)}</span><br>\n  <b>${n + 1}. ${esc(o.job_title)}</b> — ${esc(o.company)} <span style=\"color:#666\">${esc(o.location)}</span><br>\n  ${o.reason ? `<i style=\"color:#444\">${esc(o.reason)}</i><br>` : ''}\n  <a href=\"${esc(pdf)}\">📄 Télécharger le CV (PDF)</a> &nbsp;·&nbsp; <a href=\"${esc(cv)}\">✏️ Ouvrir le CV</a>\n  &nbsp;·&nbsp; <a href=\"${esc(o.apply_url || o.job_url)}\"><b>✅ Postuler</b></a>\n</div>`;\n}).join('\\n');\n\nconst s = offres.length > 1 ? 's' : '';\nconst html = `<p>Bonjour ${esc(a.prenom)} 👋</p>\n<p>${offres.length} offre${s} « ${esc(a.metier)} » (${esc(a.pays_nom)}) pour toi aujourd'hui, CV déjà adapté.\nRelis le CV → clique sur Postuler.</p>\n${cartes}\n<p style=\"color:#666\">Toutes les offres envoyées sont aussi dans ton Google Sheet.</p>`;\n\nreturn [{ json: { subject: `🎯 ${offres.length} offre${s} ${a.metier} — CV adapté`, html } }];\n"
+   }
+  },
+  {
+   "id": "b7141215-8848-4222-b014-7ed5a9ff96c2",
+   "name": "Envoyer l'email",
+   "type": "n8n-nodes-base.gmail",
+   "typeVersion": 2.1,
+   "position": [
+    3800,
+    -200
+   ],
+   "webhookId": "c2133090-dee7-4981-baa5-3a9a16533467",
+   "parameters": {
+    "sendTo": "={{ $('Paramètres').first().json.email }}",
+    "subject": "={{ $json.subject }}",
+    "message": "={{ $json.html }}",
+    "options": {
+     "appendAttribution": false
+    }
+   },
+   "notes": "⚠️ Choisis ton identifiant ici",
+   "notesInFlow": true
+  }
+ ],
+ "connections": {
+  "When clicking ‘Execute workflow’": {
+   "main": [
+    [
+     {
+      "node": "Paramètres",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Programmation (tous les jours 14h)": {
+   "main": [
+    [
+     {
+      "node": "Déjà lancé aujourd'hui ?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Démarrage de n8n": {
+   "main": [
+    [
+     {
+      "node": "Attendre le réseau",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Attendre le réseau": {
+   "main": [
+    [
+     {
+      "node": "Déjà lancé aujourd'hui ?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Déjà lancé aujourd'hui ?": {
+   "main": [
+    [
+     {
+      "node": "Paramètres",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Paramètres": {
+   "main": [
+    [
+     {
+      "node": "Lire le modèle de CV",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lire le modèle de CV": {
+   "main": [
+    [
+     {
+      "node": "Préparer le CV",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Préparer le CV": {
+   "main": [
+    [
+     {
+      "node": "Gemini lit le CV",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini lit le CV": {
+   "main": [
+    [
+     {
+      "node": "Profil du CV",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Profil du CV": {
+   "main": [
+    [
+     {
+      "node": "Lire le Sheet",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lire le Sheet": {
+   "main": [
+    [
+     {
+      "node": "Recherches",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Recherches": {
+   "main": [
+    [
+     {
+      "node": "JSearch",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "JSearch": {
+   "main": [
+    [
+     {
+      "node": "Nettoyer les offres",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Nettoyer les offres": {
+   "main": [
+    [
+     {
+      "node": "Loop Over Items",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Loop Over Items": {
+   "main": [
+    [
+     {
+      "node": "Top du jour",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Pause Gemini",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pause Gemini": {
+   "main": [
+    [
+     {
+      "node": "Noter l'offre",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Noter l'offre": {
+   "main": [
+    [
+     {
+      "node": "Lire le score",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lire le score": {
+   "main": [
+    [
+     {
+      "node": "Loop Over Items",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Top du jour": {
+   "main": [
+    [
+     {
+      "node": "Adapter le CV",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Adapter le CV": {
+   "main": [
+    [
+     {
+      "node": "Lire le CV adapté",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Lire le CV adapté": {
+   "main": [
+    [
+     {
+      "node": "Copier le modèle",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Copier le modèle": {
+   "main": [
+    [
+     {
+      "node": "Remplir le CV",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Remplir le CV": {
+   "main": [
+    [
+     {
+      "node": "Préparer la ligne",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Préparer la ligne": {
+   "main": [
+    [
+     {
+      "node": "Ajouter au Sheet",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ajouter au Sheet": {
+   "main": [
+    [
+     {
+      "node": "Résumé du jour",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Résumé du jour": {
+   "main": [
+    [
+     {
+      "node": "Envoyer l'email",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini (analyse)": {
+   "ai_languageModel": [
+    [
+     {
+      "node": "Gemini lit le CV",
+      "type": "ai_languageModel",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini (note)": {
+   "ai_languageModel": [
+    [
+     {
+      "node": "Noter l'offre",
+      "type": "ai_languageModel",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Gemini (CV)": {
+   "ai_languageModel": [
+    [
+     {
+      "node": "Adapter le CV",
+      "type": "ai_languageModel",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1",
+  "timezone": "Africa/Casablanca"
+ },
+ "pinData": {},
+ "active": false
+}
