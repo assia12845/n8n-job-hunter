@@ -22,11 +22,6 @@ It never applies for you: you review the CV and apply yourself.
 - Google Docs, Drive and Sheets
 - Gmail
 
-## Setup
-
-See [docs-installation.md](docs-installation.md) (French).
-
-
 ## The problem
 
 Adapting my CV manually to every job offer took too much time.
@@ -54,3 +49,8 @@ review the adapted CVs and click "Apply".
   with the same result on every machine.
 - Making it run automatically without failing: waiting for the network on startup,
   avoiding duplicate runs and staying within the free API quotas.
+
+
+## Setup
+
+See [docs-installation.md](docs-installation.md) (French).
