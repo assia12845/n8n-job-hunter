@@ -5,6 +5,19 @@ so you only have to review and click "Apply".
 
 ## How it works
 
+
+```mermaid
+flowchart LR
+    A[⏰ Daily 14:00<br/>or n8n startup] --> B[📄 Read CV<br/>Google Docs]
+    B --> C[🤖 Gemini<br/>extracts profile]
+    C --> D[🔎 JSearch API<br/>job offers]
+    D --> E[🧹 Filter<br/>duplicates, seniority]
+    E --> F[🤖 Gemini<br/>scores /100]
+    F --> G[🤖 Gemini<br/>adapts CV]
+    G --> H[📊 Google Sheet]
+    G --> I[📧 Gmail summary]
+```
+
 1. Reads your CV from Google Docs; Gemini extracts your role, level, country and search keywords.
 2. Searches this week's job offers with the JSearch API (Google for Jobs: LinkedIn, Indeed, local sites).
 3. Filters out irrelevant, too senior, internship and already-sent offers.
@@ -54,3 +67,4 @@ review the adapted CVs and click "Apply".
 ## Setup
 
 See [docs-installation.md](docs-installation.md) (French).
+
